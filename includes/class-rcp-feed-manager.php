@@ -42,6 +42,7 @@ class RCP_Feed_Manager {
         add_action('wp_ajax_rcp_test_feed', [$this, 'ajax_test_feed']);
         add_action('wp_ajax_rcp_import_feeds_csv', [$this, 'ajax_import_feeds_csv']);
         add_action('wp_ajax_rcp_fetch_feed_now', [$this, 'ajax_fetch_feed_now']);
+        add_action('wp_ajax_rcp_complete_setup', [$this, 'ajax_complete_setup']);
     }
     
     /**
@@ -1054,6 +1055,106 @@ class RCP_Feed_Manager {
         } else {
             wp_send_json_success($result);
         }
+    }
+    
+    /**
+     * Handle setup completion
+     */
+    public function ajax_complete_setup() {
+        // Verify nonce
+        if (!wp_verify_nonce($_POST['nonce'], 'rcp_setup')) {
+            wp_send_json_error(['message' => __('Security check failed', 'rss-content-planner')]);
+        }
+        
+        try {
+            // Parse selected feeds
+            $feeds = json_decode(stripslashes($_POST['feeds']), true);
+            $workflow = sanitize_text_field($_POST['workflow']);
+            $n8n_webhook = sanitize_url($_POST['n8n_webhook']);
+            $n8n_token = sanitize_text_field($_POST['n8n_token']);
+            
+            $added_feeds = 0;
+            
+            // Add selected sample feeds
+            if (!empty($feeds)) {
+                foreach ($feeds as $feed_url) {
+                    $result = $this->add_feed([
+                        'url' => $feed_url,
+                        'name' => $this->generate_feed_name_from_url($feed_url),
+                        'status' => 'active',
+                        'fetch_frequency' => 3600 // 1 hour
+                    ]);
+                    
+                    if ($result) {
+                        $added_feeds++;
+                    }
+                }
+            }
+            
+            // Create default webhook if n8n selected
+            if ($workflow === 'n8n' && !empty($n8n_webhook)) {
+                global $wpdb;
+                
+                $wpdb->insert(
+                    $wpdb->prefix . 'rcp_webhooks',
+                    [
+                        'name' => 'Default Setup Webhook',
+                        'url' => $n8n_webhook,
+                        'token' => $n8n_token,
+                        'processing_type' => 'rewrite',
+                        'status' => 'active',
+                        'created_at' => current_time('mysql')
+                    ]
+                );
+            }
+            
+            // Mark setup as complete
+            update_option('rcp_setup_complete', true);
+            update_option('rcp_setup_date', current_time('mysql'));
+            
+            // Log setup completion
+            $database = new RCP_Database();
+            $database->log_activity(
+                'Setup completed successfully',
+                'success',
+                null,
+                [
+                    'feeds_added' => $added_feeds,
+                    'workflow' => $workflow,
+                    'has_webhook' => !empty($n8n_webhook)
+                ]
+            );
+            
+            wp_send_json_success([
+                'message' => sprintf(__('Setup completed! Added %d feeds.', 'rss-content-planner'), $added_feeds),
+                'feeds_added' => $added_feeds
+            ]);
+            
+        } catch (Exception $e) {
+            wp_send_json_error(['message' => $e->getMessage()]);
+        }
+    }
+    
+    /**
+     * Generate feed name from URL
+     */
+    private function generate_feed_name_from_url($url) {
+        $domain = parse_url($url, PHP_URL_HOST);
+        $domain = str_replace('www.', '', $domain);
+        
+        // Map known domains to friendly names
+        $domain_names = [
+            'techcrunch.com' => 'TechCrunch',
+            'theverge.com' => 'The Verge',
+            'arstechnica.com' => 'Ars Technica',
+            'wordpress.org' => 'WordPress News',
+            'wptavern.com' => 'WP Tavern',
+            'wpbeginner.com' => 'WPBeginner',
+            'entrepreneur.com' => 'Entrepreneur',
+            'harvard.edu' => 'Harvard Business Review'
+        ];
+        
+        return $domain_names[$domain] ?? ucfirst(str_replace('.com', '', $domain));
     }
     
     /**
