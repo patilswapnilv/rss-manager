@@ -322,8 +322,8 @@ class RCP_Admin {
                                 <div class="rcp-next-step">
                                     <span class="dashicons dashicons-admin-tools"></span>
                                     <div>
-                                        <strong><?php _e('Set Up Rules', 'rss-content-planner'); ?></strong>
-                                        <p><?php _e('Create processing rules to automate content handling.', 'rss-content-planner'); ?></p>
+                                        <strong><?php _e('Configure n8n Workflows', 'rss-content-planner'); ?></strong>
+                                        <p><?php _e('Set up intelligent content processing with n8n automation workflows.', 'rss-content-planner'); ?></p>
                                     </div>
                                 </div>
                                 <div class="rcp-next-step">
@@ -818,9 +818,21 @@ class RCP_Admin {
      * Workflows page
      */
     public function workflows_page() {
-        echo '<div class="wrap"><h1>' . __('n8n Workflows', 'rss-content-planner') . '</h1>';
-        echo '<p>' . __('Manage your n8n workflow integrations here.', 'rss-content-planner') . '</p>';
-        echo '</div>';
+        $webhook_manager = new RCP_Webhook_Manager();
+        $webhooks = $webhook_manager->get_webhooks();
+        $action = $_GET['action'] ?? 'list';
+        
+        switch ($action) {
+            case 'add':
+                $this->render_add_workflow_page();
+                break;
+            case 'edit':
+                $webhook_id = $_GET['webhook_id'] ?? null;
+                $this->render_edit_workflow_page($webhook_id);
+                break;
+            default:
+                $this->render_workflows_list_page($webhooks);
+        }
     }
     
     /**
@@ -1847,10 +1859,46 @@ class RCP_Admin {
      * Render AI settings tab
      */
     private function render_ai_settings($settings) {
+        $api_key = get_option('rcp_api_key');
+        if (empty($api_key)) {
+            $api_key = wp_generate_password(32, false);
+            update_option('rcp_api_key', $api_key);
+        }
         ?>
         <div class="rcp-settings-section">
             <h2><?php _e('AI & Automation Settings', 'rss-content-planner'); ?></h2>
             <p class="description"><?php _e('Configure AI processing and automation workflows.', 'rss-content-planner'); ?></p>
+            
+            <div class="rcp-api-key-section">
+                <h3><?php _e('n8n Integration', 'rss-content-planner'); ?></h3>
+                <p><?php _e('Use this API key to connect n8n workflows to your WordPress site.', 'rss-content-planner'); ?></p>
+                <div class="rcp-api-key-display">
+                    <label><?php _e('API Key:', 'rss-content-planner'); ?></label>
+                    <code id="rcp-api-key" style="background: #f1f1f1; padding: 8px 12px; border-radius: 4px; display: inline-block; margin: 0 10px;"><?php echo esc_html($api_key); ?></code>
+                    <button type="button" class="button button-small" onclick="copyApiKey()"><?php _e('Copy', 'rss-content-planner'); ?></button>
+                    <button type="button" class="button button-small" onclick="regenerateApiKey()"><?php _e('Regenerate', 'rss-content-planner'); ?></button>
+                </div>
+                
+                <div class="rcp-api-endpoints" style="margin-top: 20px;">
+                    <h4><?php _e('Available REST API Endpoints:', 'rss-content-planner'); ?></h4>
+                    <ul style="list-style-type: disc; margin-left: 20px;">
+                        <li><code>POST /wp-json/rcp/v1/trigger-processing</code> - <?php _e('Get pending content for processing', 'rss-content-planner'); ?></li>
+                        <li><code>POST /wp-json/rcp/v1/content/{id}/processed</code> - <?php _e('Update processed content', 'rss-content-planner'); ?></li>
+                        <li><code>POST /wp-json/rcp/v1/n8n-webhook</code> - <?php _e('Generic webhook handler', 'rss-content-planner'); ?></li>
+                    </ul>
+                    <p><strong><?php _e('Authentication:', 'rss-content-planner'); ?></strong> <?php _e('Include the API key in header', 'rss-content-planner'); ?> <code>X-RCP-API-Key</code></p>
+                </div>
+                
+                <div class="rcp-workflow-templates" style="margin-top: 20px;">
+                    <h4><?php _e('n8n Workflow Templates:', 'rss-content-planner'); ?></h4>
+                    <div class="rcp-template-links">
+                        <a href="#" class="button" onclick="downloadTemplate('content_rewriter_basic')"><?php _e('Content Rewriter', 'rss-content-planner'); ?></a>
+                        <a href="#" class="button" onclick="downloadTemplate('seo_optimizer')"><?php _e('SEO Optimizer', 'rss-content-planner'); ?></a>
+                        <a href="#" class="button" onclick="downloadTemplate('content_filter_and_categorize')"><?php _e('Content Filter', 'rss-content-planner'); ?></a>
+                        <a href="#" class="button" onclick="downloadTemplate('multilingual_processor')"><?php _e('Multilingual Processor', 'rss-content-planner'); ?></a>
+                    </div>
+                </div>
+            </div>
             
             <table class="form-table">
                 <tr>
@@ -2094,6 +2142,317 @@ class RCP_Admin {
             });
         });
         </script>
+        <?php
+    }
+    
+    /**
+     * Render workflows list page
+     */
+    private function render_workflows_list_page($webhooks) {
+        ?>
+        <div class="wrap rcp-workflows">
+            <div class="rcp-page-header">
+                <h1><?php _e('n8n Workflows', 'rss-content-planner'); ?></h1>
+                <div class="rcp-header-actions">
+                    <a href="<?php echo admin_url('admin.php?page=rcp-workflows&action=add'); ?>" class="button button-primary">
+                        <span class="dashicons dashicons-plus-alt"></span> <?php _e('Add Workflow', 'rss-content-planner'); ?>
+                    </a>
+                    <button type="button" id="rcp-import-workflow" class="button">
+                        <span class="dashicons dashicons-upload"></span> <?php _e('Import from n8n', 'rss-content-planner'); ?>
+                    </button>
+                </div>
+            </div>
+
+            <div class="rcp-workflows-container">
+                <?php if (empty($webhooks)): ?>
+                    <div class="rcp-empty-state">
+                        <div class="rcp-empty-icon">
+                            <span class="dashicons dashicons-admin-settings"></span>
+                        </div>
+                        <h2><?php _e('No Workflows Yet', 'rss-content-planner'); ?></h2>
+                        <p><?php _e('Create your first n8n workflow to start automating content processing.', 'rss-content-planner'); ?></p>
+                        <div class="rcp-empty-actions">
+                            <a href="<?php echo admin_url('admin.php?page=rcp-workflows&action=add'); ?>" class="button button-primary button-large">
+                                <span class="dashicons dashicons-plus-alt"></span> <?php _e('Create Workflow', 'rss-content-planner'); ?>
+                            </a>
+                        </div>
+                    </div>
+                <?php else: ?>
+                    <div class="rcp-workflows-stats">
+                        <div class="rcp-stat-card">
+                            <div class="rcp-stat-icon">
+                                <span class="dashicons dashicons-admin-settings"></span>
+                            </div>
+                            <div class="rcp-stat-content">
+                                <h3><?php echo count($webhooks); ?></h3>
+                                <p><?php _e('Total Workflows', 'rss-content-planner'); ?></p>
+                            </div>
+                        </div>
+                        <div class="rcp-stat-card">
+                            <div class="rcp-stat-icon">
+                                <span class="dashicons dashicons-yes-alt"></span>
+                            </div>
+                            <div class="rcp-stat-content">
+                                <h3><?php echo count(array_filter($webhooks, function($w) { return $w->status === 'active'; })); ?></h3>
+                                <p><?php _e('Active Workflows', 'rss-content-planner'); ?></p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="rcp-workflows-grid">
+                        <?php foreach ($webhooks as $webhook): ?>
+                            <div class="rcp-workflow-card" data-webhook-id="<?php echo esc_attr($webhook->id); ?>">
+                                <div class="rcp-workflow-header">
+                                    <div class="rcp-workflow-info">
+                                        <h3><?php echo esc_html($webhook->name); ?></h3>
+                                        <span class="rcp-workflow-type"><?php echo esc_html(ucfirst($webhook->processing_type)); ?></span>
+                                    </div>
+                                    <div class="rcp-workflow-status">
+                                        <span class="rcp-status-badge <?php echo esc_attr($webhook->status); ?>">
+                                            <?php echo esc_html(ucfirst($webhook->status)); ?>
+                                        </span>
+                                    </div>
+                                </div>
+
+                                <div class="rcp-workflow-content">
+                                    <div class="rcp-workflow-description">
+                                        <p><?php echo esc_html($webhook->description ?: __('No description provided', 'rss-content-planner')); ?></p>
+                                    </div>
+                                </div>
+
+                                <div class="rcp-workflow-actions">
+                                    <button type="button" class="rcp-btn-test" data-webhook-id="<?php echo esc_attr($webhook->id); ?>">
+                                        <span class="dashicons dashicons-update"></span> <?php _e('Test', 'rss-content-planner'); ?>
+                                    </button>
+                                    <a href="<?php echo admin_url('admin.php?page=rcp-workflows&action=edit&webhook_id=' . $webhook->id); ?>" class="rcp-btn-edit">
+                                        <span class="dashicons dashicons-edit"></span> <?php _e('Edit', 'rss-content-planner'); ?>
+                                    </a>
+                                    <button type="button" class="rcp-btn-toggle" data-webhook-id="<?php echo esc_attr($webhook->id); ?>" data-status="<?php echo esc_attr($webhook->status); ?>">
+                                        <span class="dashicons dashicons-<?php echo $webhook->status === 'active' ? 'pause' : 'controls-play'; ?>"></span>
+                                        <?php echo $webhook->status === 'active' ? __('Pause', 'rss-content-planner') : __('Activate', 'rss-content-planner'); ?>
+                                    </button>
+                                </div>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
+            </div>
+        </div>
+
+        <script>
+        jQuery(document).ready(function($) {
+            // Workflow actions
+            $('.rcp-btn-test').on('click', function() {
+                const webhookId = $(this).data('webhook-id');
+                const btn = $(this);
+                btn.prop('disabled', true);
+
+                $.post(ajaxurl, {
+                    action: 'rcp_test_webhook',
+                    nonce: '<?php echo wp_create_nonce('rcp_admin'); ?>',
+                    webhook_id: webhookId
+                }, function(response) {
+                    btn.prop('disabled', false);
+                    showNotification(response.data.message, response.success ? 'success' : 'error');
+                });
+            });
+
+            $('.rcp-btn-toggle').on('click', function() {
+                const webhookId = $(this).data('webhook-id');
+
+                $.post(ajaxurl, {
+                    action: 'rcp_toggle_webhook',
+                    nonce: '<?php echo wp_create_nonce('rcp_admin'); ?>',
+                    webhook_id: webhookId
+                }, function(response) {
+                    if (response.success) {
+                        location.reload();
+                    } else {
+                        showNotification(response.data.message, 'error');
+                    }
+                });
+            });
+        });
+        </script>
+        <?php
+    }
+    
+    /**
+     * Render add workflow page
+     */
+    private function render_add_workflow_page() {
+        echo '<div class="wrap"><h1>' . __('Add Workflow', 'rss-content-planner') . '</h1>';
+        echo '<p>' . __('Add workflow form will be implemented here.', 'rss-content-planner') . '</p>';
+        echo '</div>';
+    }
+    
+    /**
+     * Render edit workflow page
+     */
+    private function render_edit_workflow_page($webhook_id) {
+        echo '<div class="wrap"><h1>' . __('Edit Workflow', 'rss-content-planner') . '</h1>';
+        echo '<p>' . __('Edit workflow form will be implemented here.', 'rss-content-planner') . '</p>';
+        echo '</div>';
+    }
+    
+    /**
+     * Render inbox item
+     */
+    private function render_inbox_item($item, $view_mode = 'grid') {
+        $status = $this->get_processing_status($item->ID);
+        $source_name = get_post_meta($item->ID, '_rss_source_name', true);
+        $original_url = get_post_meta($item->ID, '_rss_item_url', true);
+        $processing_time = get_post_meta($item->ID, '_rcp_processing_time', true);
+        $word_count = str_word_count(strip_tags($item->post_content));
+        
+        if ($view_mode === 'list') {
+            $this->render_inbox_item_list($item, $status, $source_name, $original_url, $processing_time, $word_count);
+        } else {
+            $this->render_inbox_item_grid($item, $status, $source_name, $original_url, $processing_time, $word_count);
+        }
+    }
+    
+    /**
+     * Render inbox item in grid view
+     */
+    private function render_inbox_item_grid($item, $status, $source_name, $original_url, $processing_time, $word_count) {
+        ?>
+        <div class="rcp-inbox-item rcp-inbox-item-grid" data-item-id="<?php echo esc_attr($item->ID); ?>">
+            <div class="rcp-item-header">
+                <label class="rcp-item-select">
+                    <input type="checkbox" class="rcp-item-checkbox" value="<?php echo esc_attr($item->ID); ?>">
+                </label>
+                <div class="rcp-item-status">
+                    <span class="rcp-status-badge rcp-status-<?php echo esc_attr($status); ?>">
+                        <?php echo esc_html(ucfirst($status)); ?>
+                    </span>
+                </div>
+            </div>
+            
+            <div class="rcp-item-content">
+                <h3 class="rcp-item-title">
+                    <a href="<?php echo esc_url($original_url); ?>" target="_blank" rel="noopener">
+                        <?php echo esc_html($item->post_title); ?>
+                        <span class="dashicons dashicons-external"></span>
+                    </a>
+                </h3>
+                
+                <div class="rcp-item-excerpt">
+                    <?php echo esc_html(wp_trim_words($item->post_content, 25)); ?>
+                </div>
+                
+                <div class="rcp-item-meta">
+                    <div class="rcp-meta-item">
+                        <span class="dashicons dashicons-rss"></span>
+                        <span><?php echo esc_html($source_name ?: __('Unknown Source', 'rss-content-planner')); ?></span>
+                    </div>
+                    <div class="rcp-meta-item">
+                        <span class="dashicons dashicons-clock"></span>
+                        <span><?php echo human_time_diff(strtotime($item->post_date)) . ' ago'; ?></span>
+                    </div>
+                    <div class="rcp-meta-item">
+                        <span class="dashicons dashicons-text"></span>
+                        <span><?php echo sprintf(__('%d words', 'rss-content-planner'), $word_count); ?></span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="rcp-item-actions">
+                <button class="rcp-btn rcp-btn-primary rcp-item-process" data-item-id="<?php echo esc_attr($item->ID); ?>" 
+                        <?php echo $status === 'processing' ? 'disabled' : ''; ?>>
+                    <span class="dashicons dashicons-admin-tools"></span>
+                    <?php echo $status === 'processing' ? __('Processing...', 'rss-content-planner') : __('Process', 'rss-content-planner'); ?>
+                </button>
+                <button class="rcp-btn rcp-btn-secondary rcp-item-edit" data-item-id="<?php echo esc_attr($item->ID); ?>">
+                    <span class="dashicons dashicons-edit"></span>
+                    <?php _e('Edit', 'rss-content-planner'); ?>
+                </button>
+                <div class="rcp-item-dropdown">
+                    <button class="rcp-btn rcp-btn-icon rcp-dropdown-toggle">
+                        <span class="dashicons dashicons-ellipsis"></span>
+                    </button>
+                    <div class="rcp-dropdown-menu">
+                        <a href="<?php echo get_edit_post_link($item->ID); ?>" class="rcp-dropdown-item">
+                            <span class="dashicons dashicons-wordpress"></span>
+                            <?php _e('Edit in WordPress', 'rss-content-planner'); ?>
+                        </a>
+                        <button class="rcp-dropdown-item rcp-item-duplicate" data-item-id="<?php echo esc_attr($item->ID); ?>">
+                            <span class="dashicons dashicons-admin-page"></span>
+                            <?php _e('Duplicate', 'rss-content-planner'); ?>
+                        </button>
+                        <button class="rcp-dropdown-item rcp-item-reprocess" data-item-id="<?php echo esc_attr($item->ID); ?>">
+                            <span class="dashicons dashicons-update"></span>
+                            <?php _e('Reprocess', 'rss-content-planner'); ?>
+                        </button>
+                        <hr class="rcp-dropdown-divider">
+                        <button class="rcp-dropdown-item rcp-item-trash" data-item-id="<?php echo esc_attr($item->ID); ?>">
+                            <span class="dashicons dashicons-trash"></span>
+                            <?php _e('Move to Trash', 'rss-content-planner'); ?>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <?php
+    }
+    
+    /**
+     * Render inbox item in list view
+     */
+    private function render_inbox_item_list($item, $status, $source_name, $original_url, $processing_time, $word_count) {
+        ?>
+        <div class="rcp-inbox-item rcp-inbox-item-list" data-item-id="<?php echo esc_attr($item->ID); ?>">
+            <div class="rcp-item-select">
+                <input type="checkbox" class="rcp-item-checkbox" value="<?php echo esc_attr($item->ID); ?>">
+            </div>
+            
+            <div class="rcp-item-main">
+                <div class="rcp-item-title-row">
+                    <h3 class="rcp-item-title">
+                        <a href="<?php echo esc_url($original_url); ?>" target="_blank" rel="noopener">
+                            <?php echo esc_html($item->post_title); ?>
+                            <span class="dashicons dashicons-external"></span>
+                        </a>
+                    </h3>
+                    <div class="rcp-item-status">
+                        <span class="rcp-status-badge rcp-status-<?php echo esc_attr($status); ?>">
+                            <?php echo esc_html(ucfirst($status)); ?>
+                        </span>
+                    </div>
+                </div>
+                
+                <div class="rcp-item-excerpt">
+                    <?php echo esc_html(wp_trim_words($item->post_content, 30)); ?>
+                </div>
+                
+                <div class="rcp-item-meta-row">
+                    <div class="rcp-item-meta">
+                        <span class="rcp-meta-item">
+                            <span class="dashicons dashicons-rss"></span>
+                            <?php echo esc_html($source_name ?: __('Unknown Source', 'rss-content-planner')); ?>
+                        </span>
+                        <span class="rcp-meta-item">
+                            <span class="dashicons dashicons-clock"></span>
+                            <?php echo human_time_diff(strtotime($item->post_date)) . ' ago'; ?>
+                        </span>
+                        <span class="rcp-meta-item">
+                            <span class="dashicons dashicons-text"></span>
+                            <?php echo sprintf(__('%d words', 'rss-content-planner'), $word_count); ?>
+                        </span>
+                    </div>
+                    
+                    <div class="rcp-item-actions">
+                        <button class="rcp-btn rcp-btn-small rcp-btn-primary rcp-item-process" data-item-id="<?php echo esc_attr($item->ID); ?>" 
+                                <?php echo $status === 'processing' ? 'disabled' : ''; ?>>
+                            <?php echo $status === 'processing' ? __('Processing...', 'rss-content-planner') : __('Process', 'rss-content-planner'); ?>
+                        </button>
+                        <button class="rcp-btn rcp-btn-small rcp-item-edit" data-item-id="<?php echo esc_attr($item->ID); ?>">
+                            <?php _e('Edit', 'rss-content-planner'); ?>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
         <?php
     }
 }

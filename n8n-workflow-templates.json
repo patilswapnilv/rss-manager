@@ -1,0 +1,363 @@
+{
+  "content_rewriter_basic": {
+    "name": "Basic Content Rewriter",
+    "description": "Fetches content from WordPress, rewrites it using AI, and updates the post",
+    "workflow": {
+      "name": "RSS Content Rewriter - Basic",
+      "nodes": [
+        {
+          "parameters": {
+            "httpMethod": "POST",
+            "path": "rcp-content-trigger",
+            "responseMode": "onReceived",
+            "options": {}
+          },
+          "id": "f1c5c5c0-8b5e-4b0a-9c0a-1a2b3c4d5e6f",
+          "name": "Webhook",
+          "type": "n8n-nodes-base.webhook",
+          "typeVersion": 1,
+          "position": [240, 300]
+        },
+        {
+          "parameters": {
+            "authentication": "headerAuth",
+            "url": "={{ $json.wordpress_url }}/wp-json/rcp/v1/trigger-processing",
+            "options": {},
+            "headerParametersUi": {
+              "parameter": [
+                {
+                  "name": "X-RCP-API-Key",
+                  "value": "={{ $json.api_key }}"
+                }
+              ]
+            }
+          },
+          "id": "a2b3c4d5-8b5e-4b0a-9c0a-1a2b3c4d5e6f",
+          "name": "Get Pending Content",
+          "type": "n8n-nodes-base.httpRequest",
+          "typeVersion": 3,
+          "position": [460, 300]
+        },
+        {
+          "parameters": {
+            "content": "You are a professional content rewriter. Rewrite the following content to be unique, engaging, and SEO-friendly while maintaining the original meaning:\n\nTitle: {{ $json.title }}\nContent: {{ $json.content }}\n\nProvide only the rewritten content in this format:\nTitle: [rewritten title]\nContent: [rewritten content]\nExcerpt: [brief excerpt]",
+            "options": {}
+          },
+          "id": "b3c4d5e6-8b5e-4b0a-9c0a-1a2b3c4d5e6f",
+          "name": "AI Content Rewriter",
+          "type": "n8n-nodes-base.openAi",
+          "typeVersion": 1,
+          "position": [680, 300]
+        },
+        {
+          "parameters": {
+            "authentication": "headerAuth",
+            "url": "={{ $('Get Pending Content').item.json.wordpress_url }}/wp-json/rcp/v1/content/{{ $('Get Pending Content').item.json.items[0].id }}/processed",
+            "sendBody": true,
+            "bodyParameters": {
+              "parameters": [
+                {
+                  "name": "title",
+                  "value": "={{ $json.choices[0].message.content.match(/Title: (.+)/)[1] }}"
+                },
+                {
+                  "name": "content", 
+                  "value": "={{ $json.choices[0].message.content.match(/Content: ([\\s\\S]+?)\\nExcerpt:/)[1] }}"
+                },
+                {
+                  "name": "excerpt",
+                  "value": "={{ $json.choices[0].message.content.match(/Excerpt: (.+)/)[1] }}"
+                },
+                {
+                  "name": "status",
+                  "value": "draft"
+                }
+              ]
+            },
+            "headerParametersUi": {
+              "parameter": [
+                {
+                  "name": "X-RCP-API-Key",
+                  "value": "={{ $('Get Pending Content').item.json.api_key }}"
+                }
+              ]
+            },
+            "options": {}
+          },
+          "id": "c4d5e6f7-8b5e-4b0a-9c0a-1a2b3c4d5e6f",
+          "name": "Update WordPress Post",
+          "type": "n8n-nodes-base.httpRequest",
+          "typeVersion": 3,
+          "position": [900, 300]
+        }
+      ],
+      "connections": {
+        "Webhook": {
+          "main": [
+            [
+              {
+                "node": "Get Pending Content",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "Get Pending Content": {
+          "main": [
+            [
+              {
+                "node": "AI Content Rewriter",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "AI Content Rewriter": {
+          "main": [
+            [
+              {
+                "node": "Update WordPress Post",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        }
+      }
+    }
+  },
+  "seo_optimizer": {
+    "name": "SEO Content Optimizer",
+    "description": "Optimizes content for SEO by improving titles, meta descriptions, and content structure",
+    "workflow": {
+      "name": "RSS Content SEO Optimizer",
+      "nodes": [
+        {
+          "parameters": {
+            "httpMethod": "POST",
+            "path": "rcp-seo-trigger",
+            "responseMode": "onReceived"
+          },
+          "name": "Webhook",
+          "type": "n8n-nodes-base.webhook",
+          "position": [240, 300]
+        },
+        {
+          "parameters": {
+            "authentication": "headerAuth",
+            "url": "={{ $json.wordpress_url }}/wp-json/rcp/v1/trigger-processing"
+          },
+          "name": "Get Pending Content",
+          "type": "n8n-nodes-base.httpRequest",
+          "position": [460, 300]
+        },
+        {
+          "parameters": {
+            "content": "Optimize the following content for SEO:\n\nTitle: {{ $json.title }}\nContent: {{ $json.content }}\n\nCreate:\n1. SEO-optimized title (max 60 chars)\n2. Meta description (max 160 chars)\n3. Improved content with proper headings\n4. 5 relevant tags\n\nFormat:\nTitle: [optimized title]\nMeta: [meta description]\nContent: [optimized content with H2, H3 headings]\nTags: [tag1, tag2, tag3, tag4, tag5]"
+          },
+          "name": "SEO Optimizer",
+          "type": "n8n-nodes-base.openAi",
+          "position": [680, 300]
+        },
+        {
+          "parameters": {
+            "url": "={{ $('Get Pending Content').item.json.wordpress_url }}/wp-json/rcp/v1/content/{{ $('Get Pending Content').item.json.items[0].id }}/processed",
+            "sendBody": true,
+            "bodyParameters": {
+              "parameters": [
+                {
+                  "name": "title",
+                  "value": "={{ $json.choices[0].message.content.match(/Title: (.+)/)[1] }}"
+                },
+                {
+                  "name": "content",
+                  "value": "={{ $json.choices[0].message.content.match(/Content: ([\\s\\S]+?)\\nTags:/)[1] }}"
+                },
+                {
+                  "name": "excerpt",
+                  "value": "={{ $json.choices[0].message.content.match(/Meta: (.+)/)[1] }}"
+                },
+                {
+                  "name": "meta",
+                  "value": "={{ { 'seo_tags': $json.choices[0].message.content.match(/Tags: (.+)/)[1] } }}"
+                },
+                {
+                  "name": "status",
+                  "value": "draft"
+                }
+              ]
+            }
+          },
+          "name": "Update WordPress Post",
+          "type": "n8n-nodes-base.httpRequest",
+          "position": [900, 300]
+        }
+      ]
+    }
+  },
+  "content_filter_and_categorize": {
+    "name": "Content Filter & Categorizer",
+    "description": "Filters content based on keywords and automatically categorizes posts",
+    "workflow": {
+      "name": "RSS Content Filter & Categorizer",
+      "nodes": [
+        {
+          "parameters": {
+            "httpMethod": "POST",
+            "path": "rcp-filter-trigger"
+          },
+          "name": "Webhook",
+          "type": "n8n-nodes-base.webhook",
+          "position": [240, 300]
+        },
+        {
+          "parameters": {
+            "url": "={{ $json.wordpress_url }}/wp-json/rcp/v1/trigger-processing"
+          },
+          "name": "Get Pending Content",
+          "type": "n8n-nodes-base.httpRequest",
+          "position": [460, 300]
+        },
+        {
+          "parameters": {
+            "conditions": {
+              "string": [
+                {
+                  "value1": "={{ $json.title.toLowerCase() }}",
+                  "operation": "contains",
+                  "value2": "{{ $json.filter_keywords || 'technology,ai,startup' }}"
+                }
+              ]
+            }
+          },
+          "name": "Content Filter",
+          "type": "n8n-nodes-base.if",
+          "position": [680, 300]
+        },
+        {
+          "parameters": {
+            "content": "Analyze this content and suggest the best category:\n\nTitle: {{ $json.title }}\nContent: {{ $json.content }}\n\nChoose ONE category from: Technology, Business, Health, Entertainment, Sports, Science, Politics, Lifestyle\n\nResponse format:\nCategory: [chosen category]\nReason: [brief reason]"
+          },
+          "name": "AI Categorizer",
+          "type": "n8n-nodes-base.openAi",
+          "position": [900, 260]
+        },
+        {
+          "parameters": {
+            "url": "={{ $('Get Pending Content').item.json.wordpress_url }}/wp-json/rcp/v1/content/{{ $('Get Pending Content').item.json.items[0].id }}/processed",
+            "sendBody": true,
+            "bodyParameters": {
+              "parameters": [
+                {
+                  "name": "status",
+                  "value": "draft"
+                },
+                {
+                  "name": "meta",
+                  "value": "={{ { 'auto_category': $json.choices[0].message.content.match(/Category: (.+)/)[1], 'filter_passed': true } }}"
+                }
+              ]
+            }
+          },
+          "name": "Update Approved Post",
+          "type": "n8n-nodes-base.httpRequest",
+          "position": [1120, 260]
+        },
+        {
+          "parameters": {
+            "url": "={{ $('Get Pending Content').item.json.wordpress_url }}/wp-json/rcp/v1/content/{{ $('Get Pending Content').item.json.items[0].id }}/processed",
+            "sendBody": true,
+            "bodyParameters": {
+              "parameters": [
+                {
+                  "name": "status",
+                  "value": "trash"
+                },
+                {
+                  "name": "meta",
+                  "value": "={{ { 'filter_passed': false, 'filter_reason': 'Does not match keyword criteria' } }}"
+                }
+              ]
+            }
+          },
+          "name": "Reject Filtered Post",
+          "type": "n8n-nodes-base.httpRequest",
+          "position": [900, 380]
+        }
+      ]
+    }
+  },
+  "multilingual_processor": {
+    "name": "Multilingual Content Processor",
+    "description": "Translates content into multiple languages and creates separate posts",
+    "workflow": {
+      "name": "RSS Multilingual Processor",
+      "nodes": [
+        {
+          "parameters": {
+            "httpMethod": "POST",
+            "path": "rcp-translate-trigger"
+          },
+          "name": "Webhook",
+          "type": "n8n-nodes-base.webhook",
+          "position": [240, 300]
+        },
+        {
+          "parameters": {
+            "url": "={{ $json.wordpress_url }}/wp-json/rcp/v1/trigger-processing"
+          },
+          "name": "Get Pending Content",
+          "type": "n8n-nodes-base.httpRequest",
+          "position": [460, 300]
+        },
+        {
+          "parameters": {
+            "content": "Translate the following content to Spanish, French, and German:\n\nTitle: {{ $json.title }}\nContent: {{ $json.content }}\n\nFormat your response as:\n[SPANISH]\nTitle: [spanish title]\nContent: [spanish content]\n\n[FRENCH]\nTitle: [french title]\nContent: [french content]\n\n[GERMAN]\nTitle: [german title]\nContent: [german content]"
+          },
+          "name": "AI Translator",
+          "type": "n8n-nodes-base.openAi",
+          "position": [680, 300]
+        },
+        {
+          "parameters": {
+            "keepOnlySet": "false",
+            "values": {
+              "string": [
+                {
+                  "name": "spanish_title",
+                  "value": "={{ $json.choices[0].message.content.match(/\\[SPANISH\\][\\s\\S]*?Title: (.+)/)[1] }}"
+                },
+                {
+                  "name": "spanish_content", 
+                  "value": "={{ $json.choices[0].message.content.match(/\\[SPANISH\\][\\s\\S]*?Content: ([\\s\\S]+?)\\n\\n\\[FRENCH\\]/)[1] }}"
+                },
+                {
+                  "name": "french_title",
+                  "value": "={{ $json.choices[0].message.content.match(/\\[FRENCH\\][\\s\\S]*?Title: (.+)/)[1] }}"
+                },
+                {
+                  "name": "french_content",
+                  "value": "={{ $json.choices[0].message.content.match(/\\[FRENCH\\][\\s\\S]*?Content: ([\\s\\S]+?)\\n\\n\\[GERMAN\\]/)[1] }}"
+                },
+                {
+                  "name": "german_title",
+                  "value": "={{ $json.choices[0].message.content.match(/\\[GERMAN\\][\\s\\S]*?Title: (.+)/)[1] }}"
+                },
+                {
+                  "name": "german_content",
+                  "value": "={{ $json.choices[0].message.content.match(/\\[GERMAN\\][\\s\\S]*?Content: ([\\s\\S]+?)$/)[1] }}"
+                }
+              ]
+            },
+            "options": {}
+          },
+          "name": "Extract Translations",
+          "type": "n8n-nodes-base.set",
+          "position": [900, 300]
+        }
+      ]
+    }
+  }
+}

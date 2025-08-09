@@ -381,4 +381,66 @@
         }
     };
     
+    // API Key Management Functions (Global scope for inline onclick handlers)
+    window.copyApiKey = function() {
+        const apiKey = document.getElementById('rcp-api-key').textContent;
+        navigator.clipboard.writeText(apiKey).then(() => {
+            RCPAdmin.showNotification('API key copied to clipboard!', 'success');
+        }).catch(() => {
+            // Fallback for older browsers
+            const textArea = document.createElement('textarea');
+            textArea.value = apiKey;
+            document.body.appendChild(textArea);
+            textArea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textArea);
+            RCPAdmin.showNotification('API key copied to clipboard!', 'success');
+        });
+    };
+    
+    window.regenerateApiKey = function() {
+        if (confirm('Are you sure? This will break any existing n8n workflows using the current API key.')) {
+            $.post(rcpAdmin.ajax_url, {
+                action: 'rcp_regenerate_api_key',
+                nonce: rcpAdmin.nonce
+            }, function(response) {
+                if (response.success) {
+                    document.getElementById('rcp-api-key').textContent = response.data.new_key;
+                    RCPAdmin.showNotification('API key regenerated successfully!', 'success');
+                } else {
+                    RCPAdmin.showNotification('Failed to regenerate API key', 'error');
+                }
+            });
+        }
+    };
+    
+    window.downloadTemplate = function(templateName) {
+        // Create download URL for the template file
+        const templateUrl = rcpAdmin.plugin_url + '/n8n-workflow-templates.json';
+        
+        $.getJSON(templateUrl)
+            .done(function(templates) {
+                if (templates[templateName]) {
+                    const template = templates[templateName];
+                    const blob = new Blob([JSON.stringify(template.workflow, null, 2)], {
+                        type: 'application/json'
+                    });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = templateName + '-workflow.json';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    RCPAdmin.showNotification('Workflow template downloaded!', 'success');
+                } else {
+                    RCPAdmin.showNotification('Template not found', 'error');
+                }
+            })
+            .fail(function() {
+                RCPAdmin.showNotification('Failed to download template', 'error');
+            });
+    };
+    
 })(jQuery);
