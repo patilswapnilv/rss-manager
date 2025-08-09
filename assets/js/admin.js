@@ -28,6 +28,9 @@
             // Test feed button
             $(document).on('click', '.rcp-test-feed', this.testFeed);
             
+            // Fetch feed button
+            $(document).on('click', '.rcp-fetch-feed', this.fetchFeed);
+            
             // Test webhook button
             $(document).on('click', '.rcp-test-webhook', this.testWebhook);
             
@@ -36,6 +39,12 @@
             
             // Add webhook form
             $(document).on('submit', '#rcp-add-webhook-form', this.submitAddWebhook);
+            
+            // CSV import
+            $(document).on('submit', '#rcp-csv-import-form', this.submitCsvImport);
+            
+            // Dynamic feed URL testing
+            $(document).on('blur', '#feed_url', this.autoTestFeed);
         },
         
         /**
@@ -52,14 +61,16 @@
             e.preventDefault();
             
             var $button = $(this);
-            var feedUrl = $button.data('url') || $('#feed-url').val();
+            var feedUrl = $button.data('url') || $('#feed_url').val();
+            var $result = $('#rcp-feed-test-result');
             
             if (!feedUrl) {
-                alert('Please enter a feed URL first.');
+                RCPAdmin.showFeedTestResult('Please enter a feed URL first.', 'error');
                 return;
             }
             
             $button.prop('disabled', true).text('Testing...');
+            $result.hide();
             
             $.ajax({
                 url: rcpAdmin.ajax_url,
@@ -71,16 +82,76 @@
                 },
                 success: function(response) {
                     if (response.success) {
-                        alert('Feed test successful! Type: ' + response.data.type + ', Title: ' + response.data.title);
+                        var message = 'Feed test successful!<br>';
+                        message += '<strong>Type:</strong> ' + response.data.type + '<br>';
+                        message += '<strong>Title:</strong> ' + response.data.title;
+                        RCPAdmin.showFeedTestResult(message, 'success');
                     } else {
-                        alert('Feed test failed: ' + response.data);
+                        RCPAdmin.showFeedTestResult('Feed test failed: ' + response.data, 'error');
                     }
                 },
                 error: function() {
-                    alert('Test failed due to network error.');
+                    RCPAdmin.showFeedTestResult('Test failed due to network error.', 'error');
                 },
                 complete: function() {
                     $button.prop('disabled', false).text('Test Feed');
+                }
+            });
+        },
+        
+        /**
+         * Auto test feed when URL field loses focus
+         */
+        autoTestFeed: function(e) {
+            var feedUrl = $(this).val();
+            if (feedUrl && feedUrl.length > 10) {
+                // Delay to avoid rapid firing
+                setTimeout(function() {
+                    $('.rcp-test-feed').trigger('click');
+                }, 500);
+            }
+        },
+        
+        /**
+         * Fetch feed now functionality
+         */
+        fetchFeed: function(e) {
+            e.preventDefault();
+            
+            var $button = $(this);
+            var feedId = $button.data('feed-id');
+            
+            if (!feedId) {
+                alert('Feed ID not found.');
+                return;
+            }
+            
+            $button.prop('disabled', true).html('<span class="rcp-loading"></span> Fetching...');
+            
+            $.ajax({
+                url: rcpAdmin.ajax_url,
+                type: 'POST',
+                data: {
+                    action: 'rcp_fetch_feed_now',
+                    feed_id: feedId,
+                    nonce: rcpAdmin.nonce
+                },
+                success: function(response) {
+                    if (response.success) {
+                        RCPAdmin.showNotification('Feed fetched successfully! Processed ' + response.data.items_processed + ' items.', 'success');
+                        // Optionally reload the page to show updated stats
+                        setTimeout(function() {
+                            location.reload();
+                        }, 2000);
+                    } else {
+                        RCPAdmin.showNotification('Feed fetch failed: ' + response.data, 'error');
+                    }
+                },
+                error: function() {
+                    RCPAdmin.showNotification('Feed fetch failed due to network error.', 'error');
+                },
+                complete: function() {
+                    $button.prop('disabled', false).text('Fetch Now');
                 }
             });
         },
@@ -213,6 +284,100 @@
             setTimeout(function() {
                 $notice.fadeOut();
             }, 5000);
+        },
+        
+        /**
+         * Show feed test result
+         */
+        showFeedTestResult: function(message, type) {
+            var $result = $('#rcp-feed-test-result');
+            
+            if ($result.length === 0) {
+                $result = $('<div id="rcp-feed-test-result" class="rcp-feed-test-result"></div>');
+                $('#feed_url').closest('td').append($result);
+            }
+            
+            $result.removeClass('success error')
+                   .addClass(type)
+                   .html(message)
+                   .show();
+        },
+        
+        /**
+         * Submit CSV import form
+         */
+        submitCsvImport: function(e) {
+            e.preventDefault();
+            
+            var $form = $(this);
+            var $submitBtn = $form.find('input[type="submit"]');
+            var $progress = $('.rcp-import-progress');
+            var $progressBar = $('.rcp-progress-bar-fill');
+            
+            // Check if file is selected
+            var fileInput = $form.find('input[type="file"]')[0];
+            if (!fileInput.files || !fileInput.files[0]) {
+                alert('Please select a CSV file to import.');
+                return;
+            }
+            
+            var formData = new FormData($form[0]);
+            formData.append('action', 'rcp_import_feeds_csv');
+            formData.append('nonce', rcpAdmin.nonce);
+            
+            $submitBtn.prop('disabled', true).val('Importing...');
+            $progress.addClass('show');
+            $progressBar.css('width', '0%');
+            
+            // Simulate progress (since we can't track actual progress with simple AJAX)
+            var progressInterval = setInterval(function() {
+                var currentWidth = parseInt($progressBar.css('width'));
+                if (currentWidth < 90) {
+                    $progressBar.css('width', (currentWidth + 10) + '%');
+                }
+            }, 500);
+            
+            $.ajax({
+                url: rcpAdmin.ajax_url,
+                type: 'POST',
+                data: formData,
+                processData: false,
+                contentType: false,
+                success: function(response) {
+                    clearInterval(progressInterval);
+                    $progressBar.css('width', '100%');
+                    
+                    if (response.success) {
+                        var result = response.data;
+                        var message = 'Import completed!<br>';
+                        message += 'Imported: ' + result.imported + ' feeds<br>';
+                        message += 'Total rows: ' + result.total_rows;
+                        
+                        if (result.errors && result.errors.length > 0) {
+                            message += '<br><br>Errors:<br>' + result.errors.join('<br>');
+                        }
+                        
+                        RCPAdmin.showNotification(message, 'success');
+                        
+                        // Redirect to feeds list after 3 seconds
+                        setTimeout(function() {
+                            window.location.href = rcpAdmin.admin_url + 'admin.php?page=rcp-feeds';
+                        }, 3000);
+                    } else {
+                        RCPAdmin.showNotification('Import failed: ' + response.data, 'error');
+                    }
+                },
+                error: function() {
+                    clearInterval(progressInterval);
+                    RCPAdmin.showNotification('Import failed due to network error.', 'error');
+                },
+                complete: function() {
+                    $submitBtn.prop('disabled', false).val('Import Feeds');
+                    setTimeout(function() {
+                        $progress.removeClass('show');
+                    }, 2000);
+                }
+            });
         }
     };
     

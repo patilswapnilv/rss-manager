@@ -34,7 +34,10 @@ class RCP_Webhook_Manager {
     private function init_hooks() {
         add_action('rest_api_init', [$this, 'register_webhook_endpoints']);
         add_action('wp_ajax_rcp_test_webhook', [$this, 'test_webhook']);
-        add_action('wp_ajax_rcp_create_webhook', [$this, 'create_webhook']);
+        add_action('wp_ajax_rcp_create_webhook', [$this, 'ajax_create_webhook']);
+        add_action('wp_ajax_rcp_delete_webhook', [$this, 'ajax_delete_webhook']);
+        add_action('wp_ajax_rcp_toggle_webhook', [$this, 'ajax_toggle_webhook']);
+        add_action('wp_ajax_rcp_import_n8n_workflow', [$this, 'ajax_import_n8n_workflow']);
     }
     
     /**
@@ -433,5 +436,245 @@ class RCP_Webhook_Manager {
         }
         
         return $result;
+    }
+    
+    /**
+     * AJAX: Create webhook
+     */
+    public function ajax_create_webhook() {
+        check_ajax_referer('rcp_admin', 'nonce');
+        
+        if (!current_user_can('rcp_manage_workflows')) {
+            wp_die('Insufficient permissions');
+        }
+        
+        $name = sanitize_text_field($_POST['name']);
+        $webhook_url = esc_url_raw($_POST['webhook_url']);
+        $workflow_data = $_POST['workflow_data'] ?? [];
+        
+        if (empty($name) || empty($webhook_url)) {
+            wp_send_json_error('Name and webhook URL are required');
+        }
+        
+        $result = $this->create_webhook($name, $webhook_url, $workflow_data);
+        
+        if (is_wp_error($result)) {
+            wp_send_json_error($result->get_error_message());
+        } else {
+            wp_send_json_success($result);
+        }
+    }
+    
+    /**
+     * AJAX: Delete webhook
+     */
+    public function ajax_delete_webhook() {
+        check_ajax_referer('rcp_admin', 'nonce');
+        
+        if (!current_user_can('rcp_manage_workflows')) {
+            wp_die('Insufficient permissions');
+        }
+        
+        $webhook_id = intval($_POST['webhook_id']);
+        
+        if (!$webhook_id) {
+            wp_send_json_error('Invalid webhook ID');
+        }
+        
+        $result = $this->delete_webhook($webhook_id);
+        
+        if ($result !== false) {
+            wp_send_json_success('Webhook deleted successfully');
+        } else {
+            wp_send_json_error('Failed to delete webhook');
+        }
+    }
+    
+    /**
+     * AJAX: Toggle webhook active status
+     */
+    public function ajax_toggle_webhook() {
+        check_ajax_referer('rcp_admin', 'nonce');
+        
+        if (!current_user_can('rcp_manage_workflows')) {
+            wp_die('Insufficient permissions');
+        }
+        
+        $webhook_id = intval($_POST['webhook_id']);
+        $active = intval($_POST['active']);
+        
+        if (!$webhook_id) {
+            wp_send_json_error('Invalid webhook ID');
+        }
+        
+        global $wpdb;
+        $webhooks_table = $this->db->get_table_name('webhooks');
+        
+        $result = $wpdb->update(
+            $webhooks_table,
+            ['active' => $active],
+            ['id' => $webhook_id]
+        );
+        
+        if ($result !== false) {
+            $status = $active ? 'activated' : 'deactivated';
+            wp_send_json_success("Webhook {$status} successfully");
+        } else {
+            wp_send_json_error('Failed to update webhook status');
+        }
+    }
+    
+    /**
+     * AJAX: Import n8n workflow
+     */
+    public function ajax_import_n8n_workflow() {
+        check_ajax_referer('rcp_admin', 'nonce');
+        
+        if (!current_user_can('rcp_manage_workflows')) {
+            wp_die('Insufficient permissions');
+        }
+        
+        $workflow_json = $_POST['workflow_json'] ?? '';
+        
+        if (empty($workflow_json)) {
+            wp_send_json_error('Workflow JSON is required');
+        }
+        
+        $workflow_data = json_decode(stripslashes($workflow_json), true);
+        
+        if (!$workflow_data) {
+            wp_send_json_error('Invalid JSON format');
+        }
+        
+        $result = $this->import_n8n_workflow($workflow_data);
+        
+        if (is_wp_error($result)) {
+            wp_send_json_error($result->get_error_message());
+        } else {
+            wp_send_json_success($result);
+        }
+    }
+    
+    /**
+     * Import n8n workflow from JSON
+     */
+    public function import_n8n_workflow($workflow_data) {
+        // Validate required fields
+        if (empty($workflow_data['name'])) {
+            return new WP_Error('missing_name', 'Workflow name is required');
+        }
+        
+        // Extract webhook URL from workflow if available
+        $webhook_url = $this->extract_webhook_url_from_workflow($workflow_data);
+        
+        if (!$webhook_url) {
+            return new WP_Error('no_webhook', 'No webhook trigger found in workflow');
+        }
+        
+        // Create webhook from workflow
+        $name = sanitize_text_field($workflow_data['name']);
+        $description = sanitize_textarea_field($workflow_data['meta']['description'] ?? '');
+        
+        $webhook_data = [
+            'name' => $name,
+            'description' => $description,
+            'processing_type' => $this->detect_processing_type($workflow_data),
+            'n8n_workflow_json' => $workflow_data,
+        ];
+        
+        return $this->create_webhook($name, $webhook_url, $webhook_data);
+    }
+    
+    /**
+     * Extract webhook URL from n8n workflow
+     */
+    private function extract_webhook_url_from_workflow($workflow_data) {
+        if (!isset($workflow_data['nodes'])) {
+            return null;
+        }
+        
+        foreach ($workflow_data['nodes'] as $node) {
+            if (isset($node['type']) && strpos($node['type'], 'webhook') !== false) {
+                return $node['webhookUrl'] ?? $node['parameters']['path'] ?? null;
+            }
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Detect processing type from workflow
+     */
+    private function detect_processing_type($workflow_data) {
+        $workflow_name = strtolower($workflow_data['name'] ?? '');
+        
+        if (strpos($workflow_name, 'seo') !== false) {
+            return 'seo_optimize';
+        } elseif (strpos($workflow_name, 'translat') !== false) {
+            return 'translate';
+        } elseif (strpos($workflow_name, 'rewrite') !== false) {
+            return 'content_rewrite';
+        }
+        
+        return 'custom';
+    }
+    
+    /**
+     * Get execution history for a webhook
+     */
+    public function get_execution_history($webhook_id, $limit = 50) {
+        global $wpdb;
+        
+        $executions_table = $this->db->get_table_name('executions');
+        
+        return $wpdb->get_results($wpdb->prepare(
+            "SELECT * FROM $executions_table WHERE webhook_id = %d ORDER BY started_at DESC LIMIT %d",
+            $webhook_id,
+            $limit
+        ));
+    }
+    
+    /**
+     * Retry failed execution
+     */
+    public function retry_execution($execution_id) {
+        global $wpdb;
+        
+        $executions_table = $this->db->get_table_name('executions');
+        
+        $execution = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM $executions_table WHERE id = %d",
+            $execution_id
+        ));
+        
+        if (!$execution) {
+            return new WP_Error('execution_not_found', 'Execution not found');
+        }
+        
+        $payload = json_decode($execution->request_payload, true);
+        
+        if (!$payload) {
+            return new WP_Error('invalid_payload', 'Invalid execution payload');
+        }
+        
+        // Create new execution record
+        $new_execution_data = [
+            'item_id' => $execution->item_id,
+            'webhook_id' => $execution->webhook_id,
+            'execution_id' => uniqid('rcp_retry_', true),
+            'status' => 'pending',
+            'request_payload' => $execution->request_payload,
+        ];
+        
+        $wpdb->insert($executions_table, $new_execution_data);
+        
+        // Send the request
+        return $this->send_to_webhook($execution->webhook_id, [
+            'item_id' => $execution->item_id,
+            'content' => $payload['content'] ?? '',
+            'title' => $payload['title'] ?? '',
+            'source_url' => $payload['source_url'] ?? '',
+            'metadata' => $payload['metadata'] ?? [],
+        ]);
     }
 }

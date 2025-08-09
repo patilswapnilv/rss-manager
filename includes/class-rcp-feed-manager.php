@@ -41,6 +41,7 @@ class RCP_Feed_Manager {
         add_action('wp_ajax_rcp_add_feed', [$this, 'ajax_add_feed']);
         add_action('wp_ajax_rcp_test_feed', [$this, 'ajax_test_feed']);
         add_action('wp_ajax_rcp_import_feeds_csv', [$this, 'ajax_import_feeds_csv']);
+        add_action('wp_ajax_rcp_fetch_feed_now', [$this, 'ajax_fetch_feed_now']);
     }
     
     /**
@@ -309,9 +310,57 @@ class RCP_Feed_Manager {
     }
     
     /**
-     * Parse feed content
+     * Parse feed content using SimplePie if available, fallback to basic XML parsing
      */
     private function parse_feed_content($content, $feed) {
+        // Try to use SimplePie if available
+        if (class_exists('SimplePie')) {
+            return $this->parse_with_simplepie($content, $feed);
+        }
+        
+        // Fallback to basic XML parsing
+        return $this->parse_with_simplexml($content, $feed);
+    }
+    
+    /**
+     * Parse feed using SimplePie
+     */
+    private function parse_with_simplepie($content, $feed) {
+        $simplepie = new SimplePie();
+        $simplepie->set_raw_data($content);
+        $simplepie->init();
+        $simplepie->handle_content_type();
+        
+        if ($simplepie->error()) {
+            return new WP_Error('simplepie_error', $simplepie->error());
+        }
+        
+        $items = [];
+        $simplepie_items = $simplepie->get_items(0, 50); // Limit to 50 items per fetch
+        
+        foreach ($simplepie_items as $item) {
+            $items[] = [
+                'title' => $item->get_title(),
+                'content' => $item->get_content() ?: $item->get_description(),
+                'description' => $item->get_description(),
+                'link' => $item->get_permalink(),
+                'guid' => $item->get_id(),
+                'author' => $this->extract_simplepie_author($item),
+                'pub_date' => $item->get_date('Y-m-d H:i:s'),
+                'categories' => $this->extract_simplepie_categories($item),
+                'feed_id' => $feed->id,
+                'source_site' => $feed->source_site,
+                'enclosures' => $this->extract_simplepie_enclosures($item),
+            ];
+        }
+        
+        return $items;
+    }
+    
+    /**
+     * Parse feed using SimpleXML (fallback)
+     */
+    private function parse_with_simplexml($content, $feed) {
         libxml_use_internal_errors(true);
         $xml = simplexml_load_string($content);
         
@@ -335,6 +384,53 @@ class RCP_Feed_Manager {
         }
         
         return $items;
+    }
+    
+    /**
+     * Extract author from SimplePie item
+     */
+    private function extract_simplepie_author($item) {
+        $author = $item->get_author();
+        if ($author) {
+            return $author->get_name() ?: $author->get_email();
+        }
+        return '';
+    }
+    
+    /**
+     * Extract categories from SimplePie item
+     */
+    private function extract_simplepie_categories($item) {
+        $categories = [];
+        $simplepie_categories = $item->get_categories();
+        
+        if ($simplepie_categories) {
+            foreach ($simplepie_categories as $category) {
+                $categories[] = $category->get_term();
+            }
+        }
+        
+        return $categories;
+    }
+    
+    /**
+     * Extract enclosures (media) from SimplePie item
+     */
+    private function extract_simplepie_enclosures($item) {
+        $enclosures = [];
+        $simplepie_enclosures = $item->get_enclosures();
+        
+        if ($simplepie_enclosures) {
+            foreach ($simplepie_enclosures as $enclosure) {
+                $enclosures[] = [
+                    'url' => $enclosure->get_link(),
+                    'type' => $enclosure->get_type(),
+                    'length' => $enclosure->get_length(),
+                ];
+            }
+        }
+        
+        return $enclosures;
     }
     
     /**
@@ -444,6 +540,7 @@ class RCP_Feed_Manager {
                 '_rss_source_site' => sanitize_text_field($item_data['source_site']),
                 '_rss_author' => sanitize_text_field($item_data['author']),
                 '_rss_categories' => json_encode($item_data['categories']),
+                '_rss_enclosures' => json_encode($item_data['enclosures'] ?? []),
                 '_processing_status' => 'pending',
             ],
         ];
@@ -459,6 +556,9 @@ class RCP_Feed_Manager {
             wp_set_object_terms($rss_item_id, $item_data['source_site'], 'rcp_source_site');
         }
         
+        // Process media if available
+        $this->process_item_media($rss_item_id, $item_data, $feed);
+        
         // Trigger processing if webhook manager is available
         if ($this->webhook_manager) {
             $this->trigger_content_processing($rss_item_id, $item_data, $feed);
@@ -467,6 +567,93 @@ class RCP_Feed_Manager {
         do_action('rcp_item_processed', $rss_item_id, $item_data, $feed);
         
         return true;
+    }
+    
+    /**
+     * Process media (images, videos, etc.) from RSS item
+     */
+    private function process_item_media($rss_item_id, $item_data, $feed) {
+        $enclosures = $item_data['enclosures'] ?? [];
+        
+        if (empty($enclosures)) {
+            return;
+        }
+        
+        // Look for images to set as featured image
+        foreach ($enclosures as $enclosure) {
+            if (strpos($enclosure['type'], 'image/') === 0) {
+                $this->process_featured_image($rss_item_id, $enclosure['url'], $item_data['title']);
+                break; // Use the first image as featured image
+            }
+        }
+        
+        // Store all media references for later processing
+        update_post_meta($rss_item_id, '_rss_media_processed', false);
+    }
+    
+    /**
+     * Process and set featured image
+     */
+    private function process_featured_image($post_id, $image_url, $alt_text = '') {
+        // Skip if image URL is empty
+        if (empty($image_url)) {
+            return false;
+        }
+        
+        // Check if we should download media locally (configurable setting)
+        $download_media = get_option('rcp_download_media', false);
+        
+        if (!$download_media) {
+            // Just store the URL for reference
+            update_post_meta($post_id, '_rss_featured_image_url', esc_url($image_url));
+            return false;
+        }
+        
+        // Download and attach the image
+        require_once(ABSPATH . 'wp-admin/includes/media.php');
+        require_once(ABSPATH . 'wp-admin/includes/file.php');
+        require_once(ABSPATH . 'wp-admin/includes/image.php');
+        
+        // Download file to temp location
+        $temp_file = download_url($image_url, 30);
+        
+        if (is_wp_error($temp_file)) {
+            $this->db->log('warning', 'media', 'Failed to download image: ' . $temp_file->get_error_message(), [
+                'post_id' => $post_id,
+                'image_url' => $image_url
+            ]);
+            return false;
+        }
+        
+        // Prepare file array
+        $file_array = [
+            'name' => basename($image_url),
+            'tmp_name' => $temp_file,
+        ];
+        
+        // Upload file
+        $attachment_id = media_handle_sideload($file_array, $post_id, $alt_text);
+        
+        // Clean up temp file
+        @unlink($temp_file);
+        
+        if (is_wp_error($attachment_id)) {
+            $this->db->log('warning', 'media', 'Failed to create attachment: ' . $attachment_id->get_error_message(), [
+                'post_id' => $post_id,
+                'image_url' => $image_url
+            ]);
+            return false;
+        }
+        
+        // Set as featured image
+        set_post_thumbnail($post_id, $attachment_id);
+        
+        $this->db->log('info', 'media', 'Featured image processed', [
+            'post_id' => $post_id,
+            'attachment_id' => $attachment_id
+        ]);
+        
+        return $attachment_id;
     }
     
     /**
@@ -686,6 +873,181 @@ class RCP_Feed_Manager {
         
         $url = esc_url_raw($_POST['url']);
         $result = $this->validate_feed($url);
+        
+        if (is_wp_error($result)) {
+            wp_send_json_error($result->get_error_message());
+        } else {
+            wp_send_json_success($result);
+        }
+    }
+    
+    /**
+     * AJAX: Import feeds from CSV
+     */
+    public function ajax_import_feeds_csv() {
+        check_ajax_referer('rcp_import_csv', 'nonce');
+        
+        if (!current_user_can('rcp_manage_feeds')) {
+            wp_die('Insufficient permissions');
+        }
+        
+        if (!isset($_FILES['csv_file']) || $_FILES['csv_file']['error'] !== UPLOAD_ERR_OK) {
+            wp_send_json_error('No valid CSV file uploaded');
+        }
+        
+        $result = $this->import_feeds_from_csv($_FILES['csv_file']['tmp_name']);
+        
+        if (is_wp_error($result)) {
+            wp_send_json_error($result->get_error_message());
+        } else {
+            wp_send_json_success($result);
+        }
+    }
+    
+    /**
+     * Import feeds from CSV file
+     */
+    public function import_feeds_from_csv($csv_file_path) {
+        if (!file_exists($csv_file_path)) {
+            return new WP_Error('file_not_found', 'CSV file not found');
+        }
+        
+        $handle = fopen($csv_file_path, 'r');
+        if (!$handle) {
+            return new WP_Error('file_error', 'Could not read CSV file');
+        }
+        
+        $results = [
+            'imported' => 0,
+            'errors' => [],
+            'total_rows' => 0,
+        ];
+        
+        $headers = fgetcsv($handle); // Skip header row
+        $row_number = 1;
+        
+        while (($data = fgetcsv($handle)) !== false) {
+            $row_number++;
+            $results['total_rows']++;
+            
+            // Map CSV columns to feed data
+            $feed_data = $this->map_csv_to_feed_data($headers, $data);
+            
+            if (is_wp_error($feed_data)) {
+                $results['errors'][] = "Row {$row_number}: " . $feed_data->get_error_message();
+                continue;
+            }
+            
+            $feed_id = $this->add_feed($feed_data);
+            
+            if (is_wp_error($feed_id)) {
+                $results['errors'][] = "Row {$row_number}: " . $feed_id->get_error_message();
+            } else {
+                $results['imported']++;
+            }
+        }
+        
+        fclose($handle);
+        
+        return $results;
+    }
+    
+    /**
+     * Map CSV data to feed data structure
+     */
+    private function map_csv_to_feed_data($headers, $data) {
+        if (count($headers) !== count($data)) {
+            return new WP_Error('csv_mismatch', 'CSV column count mismatch');
+        }
+        
+        $csv_data = array_combine($headers, $data);
+        
+        // Required fields
+        if (empty($csv_data['feed_name']) || empty($csv_data['feed_url'])) {
+            return new WP_Error('missing_required', 'feed_name and feed_url are required');
+        }
+        
+        // Map to internal structure
+        $feed_data = [
+            'name' => $csv_data['feed_name'],
+            'url' => $csv_data['feed_url'],
+            'description' => $csv_data['description'] ?? '',
+            'source_site' => $csv_data['source_site'] ?? '',
+            'language' => $csv_data['language'] ?? 'en',
+            'polling_interval' => intval($csv_data['polling_interval'] ?? 3600),
+            'attribution_template' => $csv_data['attribution_template'] ?? '',
+            'license_note' => $csv_data['license_note'] ?? '',
+        ];
+        
+        // Handle category mapping
+        if (!empty($csv_data['default_wp_category'])) {
+            $category = get_category_by_slug($csv_data['default_wp_category']);
+            if ($category) {
+                $feed_data['default_category'] = $category->term_id;
+            }
+        }
+        
+        // Handle tags
+        if (!empty($csv_data['default_tags'])) {
+            $feed_data['default_tags'] = $csv_data['default_tags'];
+        }
+        
+        return $feed_data;
+    }
+    
+    /**
+     * Generate CSV template for download
+     */
+    public function generate_csv_template() {
+        $headers = [
+            'feed_name',
+            'feed_url', 
+            'description',
+            'source_site',
+            'language',
+            'polling_interval',
+            'default_wp_category',
+            'default_tags',
+            'attribution_template',
+            'license_note'
+        ];
+        
+        $sample_data = [
+            'TechCrunch',
+            'https://techcrunch.com/feed/',
+            'Technology news and startup information',
+            'TechCrunch',
+            'en',
+            '3600',
+            'technology',
+            'tech, startup, news',
+            'Originally published on {source_site} on {pub_date}',
+            'All rights reserved'
+        ];
+        
+        return [
+            'headers' => $headers,
+            'sample' => $sample_data
+        ];
+    }
+    
+    /**
+     * AJAX: Fetch feed now
+     */
+    public function ajax_fetch_feed_now() {
+        check_ajax_referer('rcp_admin', 'nonce');
+        
+        if (!current_user_can('rcp_manage_feeds')) {
+            wp_die('Insufficient permissions');
+        }
+        
+        $feed_id = intval($_POST['feed_id']);
+        
+        if (!$feed_id) {
+            wp_send_json_error('Invalid feed ID');
+        }
+        
+        $result = $this->fetch_feed($feed_id);
         
         if (is_wp_error($result)) {
             wp_send_json_error($result->get_error_message());

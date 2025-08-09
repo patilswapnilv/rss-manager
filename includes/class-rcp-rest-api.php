@@ -30,27 +30,169 @@ class RCP_REST_API {
         
         // Feeds endpoints
         register_rest_route($namespace, '/feeds', [
-            'methods' => 'GET',
-            'callback' => [$this, 'get_feeds'],
-            'permission_callback' => [$this, 'check_permissions'],
+            [
+                'methods' => 'GET',
+                'callback' => [$this, 'get_feeds'],
+                'permission_callback' => [$this, 'check_permissions'],
+            ],
+            [
+                'methods' => 'POST',
+                'callback' => [$this, 'create_feed'],
+                'permission_callback' => [$this, 'check_permissions'],
+                'args' => $this->get_feed_schema(),
+            ]
         ]);
         
-        register_rest_route($namespace, '/feeds', [
+        register_rest_route($namespace, '/feeds/(?P<id>\d+)', [
+            [
+                'methods' => 'GET',
+                'callback' => [$this, 'get_feed'],
+                'permission_callback' => [$this, 'check_permissions'],
+            ],
+            [
+                'methods' => 'PUT',
+                'callback' => [$this, 'update_feed'],
+                'permission_callback' => [$this, 'check_permissions'],
+                'args' => $this->get_feed_schema(),
+            ],
+            [
+                'methods' => 'DELETE',
+                'callback' => [$this, 'delete_feed'],
+                'permission_callback' => [$this, 'check_permissions'],
+            ]
+        ]);
+        
+        register_rest_route($namespace, '/feeds/(?P<id>\d+)/fetch', [
             'methods' => 'POST',
-            'callback' => [$this, 'create_feed'],
+            'callback' => [$this, 'fetch_feed'],
             'permission_callback' => [$this, 'check_permissions'],
         ]);
         
         // Webhooks endpoints
         register_rest_route($namespace, '/webhooks', [
-            'methods' => 'GET',
-            'callback' => [$this, 'get_webhooks'],
+            [
+                'methods' => 'GET',
+                'callback' => [$this, 'get_webhooks'],
+                'permission_callback' => [$this, 'check_permissions'],
+            ],
+            [
+                'methods' => 'POST',
+                'callback' => [$this, 'create_webhook'],
+                'permission_callback' => [$this, 'check_permissions'],
+                'args' => $this->get_webhook_schema(),
+            ]
+        ]);
+        
+        register_rest_route($namespace, '/webhooks/(?P<id>\d+)', [
+            [
+                'methods' => 'GET',
+                'callback' => [$this, 'get_webhook'],
+                'permission_callback' => [$this, 'check_permissions'],
+            ],
+            [
+                'methods' => 'PUT',
+                'callback' => [$this, 'update_webhook'],
+                'permission_callback' => [$this, 'check_permissions'],
+            ],
+            [
+                'methods' => 'DELETE',
+                'callback' => [$this, 'delete_webhook'],
+                'permission_callback' => [$this, 'check_permissions'],
+            ]
+        ]);
+        
+        register_rest_route($namespace, '/webhooks/(?P<id>\d+)/test', [
+            'methods' => 'POST',
+            'callback' => [$this, 'test_webhook'],
             'permission_callback' => [$this, 'check_permissions'],
         ]);
         
-        register_rest_route($namespace, '/webhooks', [
+        // Rules endpoints
+        register_rest_route($namespace, '/rules', [
+            [
+                'methods' => 'GET',
+                'callback' => [$this, 'get_rules'],
+                'permission_callback' => [$this, 'check_permissions'],
+            ],
+            [
+                'methods' => 'POST',
+                'callback' => [$this, 'create_rule'],
+                'permission_callback' => [$this, 'check_permissions'],
+            ]
+        ]);
+        
+        register_rest_route($namespace, '/rules/(?P<id>\d+)', [
+            [
+                'methods' => 'GET',
+                'callback' => [$this, 'get_rule'],
+                'permission_callback' => [$this, 'check_permissions'],
+            ],
+            [
+                'methods' => 'PUT',
+                'callback' => [$this, 'update_rule'],
+                'permission_callback' => [$this, 'check_permissions'],
+            ],
+            [
+                'methods' => 'DELETE',
+                'callback' => [$this, 'delete_rule'],
+                'permission_callback' => [$this, 'check_permissions'],
+            ]
+        ]);
+        
+        // Items endpoints
+        register_rest_route($namespace, '/items', [
+            'methods' => 'GET',
+            'callback' => [$this, 'get_items'],
+            'permission_callback' => [$this, 'check_permissions'],
+        ]);
+        
+        register_rest_route($namespace, '/items/(?P<id>\d+)', [
+            [
+                'methods' => 'GET',
+                'callback' => [$this, 'get_item'],
+                'permission_callback' => [$this, 'check_permissions'],
+            ],
+            [
+                'methods' => 'PUT',
+                'callback' => [$this, 'update_item'],
+                'permission_callback' => [$this, 'check_permissions'],
+            ],
+            [
+                'methods' => 'DELETE',
+                'callback' => [$this, 'delete_item'],
+                'permission_callback' => [$this, 'check_permissions'],
+            ]
+        ]);
+        
+        register_rest_route($namespace, '/items/(?P<id>\d+)/process', [
             'methods' => 'POST',
-            'callback' => [$this, 'create_webhook'],
+            'callback' => [$this, 'process_item'],
+            'permission_callback' => [$this, 'check_permissions'],
+        ]);
+        
+        // Templates endpoints
+        register_rest_route($namespace, '/templates', [
+            'methods' => 'GET',
+            'callback' => [$this, 'get_templates'],
+            'permission_callback' => [$this, 'check_permissions'],
+        ]);
+        
+        register_rest_route($namespace, '/templates/(?P<id>\d+)', [
+            'methods' => 'GET',
+            'callback' => [$this, 'get_template'],
+            'permission_callback' => [$this, 'check_permissions'],
+        ]);
+        
+        // Stats endpoints
+        register_rest_route($namespace, '/stats/dashboard', [
+            'methods' => 'GET',
+            'callback' => [$this, 'get_dashboard_stats'],
+            'permission_callback' => [$this, 'check_permissions'],
+        ]);
+        
+        register_rest_route($namespace, '/stats/feeds', [
+            'methods' => 'GET',
+            'callback' => [$this, 'get_feeds_stats'],
             'permission_callback' => [$this, 'check_permissions'],
         ]);
     }

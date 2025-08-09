@@ -153,6 +153,88 @@
     100% { transform: rotate(360deg); }
 }
 
+/* Feed Management Styles */
+.status-success {
+    color: #00a32a;
+    font-weight: 600;
+}
+
+.status-error {
+    color: #d63638;
+    font-weight: 600;
+}
+
+.status-warning {
+    color: #dba617;
+    font-weight: 600;
+}
+
+.rcp-feed-test-result {
+    margin-top: 10px;
+    padding: 10px;
+    border-radius: 4px;
+}
+
+.rcp-feed-test-result.success {
+    background: #d4edda;
+    border: 1px solid #c3e6cb;
+    color: #155724;
+}
+
+.rcp-feed-test-result.error {
+    background: #f8d7da;
+    border: 1px solid #f5c6cb;
+    color: #721c24;
+}
+
+.rcp-feed-form {
+    max-width: 800px;
+}
+
+.rcp-import-progress {
+    margin: 20px 0;
+    padding: 15px;
+    background: #f0f0f1;
+    border-radius: 4px;
+    display: none;
+}
+
+.rcp-import-progress.show {
+    display: block;
+}
+
+.rcp-progress-bar {
+    width: 100%;
+    height: 20px;
+    background: #ddd;
+    border-radius: 10px;
+    overflow: hidden;
+    margin: 10px 0;
+}
+
+.rcp-progress-bar-fill {
+    height: 100%;
+    background: #0073aa;
+    width: 0%;
+    transition: width 0.3s ease;
+}
+
+/* Bulk Import Styles */
+.rcp-csv-template {
+    background: #f9f9f9;
+    border: 1px solid #ddd;
+    padding: 15px;
+    border-radius: 4px;
+    margin: 20px 0;
+}
+
+.rcp-csv-template code {
+    background: #fff;
+    padding: 2px 4px;
+    border-radius: 3px;
+    font-size: 12px;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
     .rcp-form-grid {
@@ -161,5 +243,14 @@
     
     .rcp-dashboard-grid {
         grid-template-columns: 1fr;
+    }
+    
+    .wp-list-table {
+        font-size: 14px;
+    }
+    
+    .wp-list-table th,
+    .wp-list-table td {
+        padding: 8px 4px;
     }
 }

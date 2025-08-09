@@ -79,6 +79,7 @@ class RSSContentPlanner {
     private function load_dependencies() {
         // Core classes
         require_once RCP_PLUGIN_PATH . 'includes/class-rcp-database.php';
+        require_once RCP_PLUGIN_PATH . 'includes/class-rcp-settings.php';
         require_once RCP_PLUGIN_PATH . 'includes/class-rcp-feed-manager.php';
         require_once RCP_PLUGIN_PATH . 'includes/class-rcp-webhook-manager.php';
         require_once RCP_PLUGIN_PATH . 'includes/class-rcp-rules-engine.php';
@@ -103,6 +104,7 @@ class RSSContentPlanner {
         // Initialize components with error handling
         try {
             $this->database = new RCP_Database();
+            $this->settings = new RCP_Settings();
             $this->feed_manager = new RCP_Feed_Manager($this->database);
             $this->webhook_manager = new RCP_Webhook_Manager($this->database);
             $this->rules_engine = new RCP_Rules_Engine($this->database);
